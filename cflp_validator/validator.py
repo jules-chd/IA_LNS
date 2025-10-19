@@ -1,6 +1,5 @@
 import json
 import sys
-print("test")
 UNASSIGNED_CUSTOMER_PENALTY = 10_000
 
 
