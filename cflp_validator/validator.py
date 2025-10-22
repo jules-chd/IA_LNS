@@ -53,12 +53,12 @@ def calculate_solution_cost(solution, instance):
     return total_cost
 
 
-# instance_file_path, solution_file_path, mode = sys.argv[1], sys.argv[2], sys.argv[3]
-# instance, solution = read_json(instance_file_path), read_json(solution_file_path)
-# if mode == 'VALIDATE':
-#     print(is_solution_feasible(solution, instance))
-# elif mode == 'COST':
-#     print(5)
-#     print(calculate_solution_cost(solution, instance))
-# else:
-#     raise "Invalid mode"
+instance_file_path, solution_file_path, mode = sys.argv[1], sys.argv[2], sys.argv[3]
+instance, solution = read_json(instance_file_path), read_json(solution_file_path)
+if mode == 'VALIDATE':
+    print(is_solution_feasible(solution, instance))
+elif mode == 'COST':
+    print(5)
+    print(calculate_solution_cost(solution, instance))
+else:
+    raise "Invalid mode"
