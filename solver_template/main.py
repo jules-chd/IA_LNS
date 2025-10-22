@@ -24,6 +24,9 @@ output_path = sys.argv[2]
 
 def main():
     instance = read_instance_json(instance_path)
+    if solution_function.is_infeasible(instance):
+        raise Exception("Instance is infeasible, no solution possible.")
+
     solution = solution_function.naive_feasible_solution(instance)
     initial_cost = calculate_solution_cost(solution, instance)
     write_instance_json(solution, output_path)

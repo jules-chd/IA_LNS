@@ -25,6 +25,8 @@ def naive_feasible_solution(instance):
             raise Exception(f"No feasible facility found for customer {i} in naive_feasible_solution")
     return initial_solution
 
+
+
 def random_destroy(solution, destroy_ratio):
     num_customers = len(solution)
     num_to_destroy = int(num_customers * destroy_ratio)
@@ -106,3 +108,28 @@ def repair(destroyed_solution, instance, closed_factories=None):
         facility_remain_capacity[chosen_fac] -= demand
 
     return new_solution
+
+def is_infeasible(instance):
+    """
+    Minimal feasibility check (assumes instance well-formed).
+    Returns True if infeasible, False otherwise.
+    Checks:
+      - any customer demand > max facility capacity
+      - total demand > total capacity
+    """
+    facilities = instance["facilities"]
+    demands = instance["customer_demands"]
+
+    capacities = [float(f["capacity"]) for f in facilities]
+    total_capacity = sum(capacities)
+    total_demand = sum(float(d) for d in demands)
+
+    max_cap = max(capacities) if capacities else 0.0
+
+    # per-customer check
+    for d in demands:
+        if float(d) > max_cap:
+            return True
+
+    # total capacity check
+    return total_demand > total_capacity
