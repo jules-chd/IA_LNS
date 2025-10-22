@@ -4,27 +4,37 @@ import json
 import time
 import os
 import math
+
+# let me import the helper modules from the parent folder
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from cflp_viz.visualization import visualize_solution
 from cflp_validator.validator import calculate_solution_cost, is_solution_feasible
 
+# I start with a simple greedy feasible solution:
+# assign each customer to the cheapest facility that still has enough remaining capacity.
 def naive_feasible_solution(instance):
     facility_remain_capacity = [f["capacity"] for f in instance["facilities"]]
     initial_solution = []
     for i, demand in enumerate(instance["customer_demands"]):
-        # list (cost, facility) sorted by increasing cost
-        assignment_costs = sorted([(instance["assignment_costs"][j][i], j) for j in range(len(instance["facilities"]))])
+        # list of (assignment_cost, facility_index) sorted by increasing cost for this customer
+        assignment_costs = sorted(
+            [(instance["assignment_costs"][j][i], j) for j in range(len(instance["facilities"]))]
+        )
         assigned = None
         for cost, fac in assignment_costs:
+            # pick the first facility that can fit this customer's demand
             if demand <= facility_remain_capacity[fac]:
                 assigned = fac
-                facility_remain_capacity[fac] -= demand   # <-- important update
+                # update remaining capacity right away so next customers see the change
+                facility_remain_capacity[fac] -= demand
                 initial_solution.append(fac)
                 break
+        # if I can't place a customer here, the instance is probably infeasible for this approach
         if assigned is None:
             raise Exception(f"No feasible facility found for customer {i} in naive_feasible_solution")
     return initial_solution
 
+# randomly "destroy" a portion of customers by unassigning them (set to None).
 def random_destroy(solution, destroy_ratio):
     num_customers = len(solution)
     num_to_destroy = int(num_customers * destroy_ratio)
@@ -34,6 +44,8 @@ def random_destroy(solution, destroy_ratio):
         new_solution[customer] = None
     return new_solution
 
+# "destroy" by randomly picking some factories to close temporarily,
+# and unassign all customers served by those factories.
 def factory_destroy(solution, instance, num_factories=1):
     if not isinstance(instance, dict):
         raise TypeError(f"factory_destroy expected instance (dict), got {type(instance)}")
@@ -49,7 +61,8 @@ def factory_destroy(solution, instance, num_factories=1):
 
     return new_solution
 
-# ---------- NEW: destroy the most expensive assigned customers
+# destroy the most expensive customer assignments (by assignment cost),
+# so the repair step can try to place them better.
 def expensive_destroy(solution, instance, destroy_ratio):
     n = len(solution)
     k = int(n * destroy_ratio)
@@ -59,7 +72,9 @@ def expensive_destroy(solution, instance, destroy_ratio):
     pairs = []
     for c, f in enumerate(solution):
         if f is not None:
+            # store (current_assignment_cost, customer_index)
             pairs.append((costs[f][c], c))
+    # take the largest costs first
     pairs.sort(reverse=True)
     to_destroy = [c for _, c in pairs[:k]]
     new_solution = solution.copy()
@@ -67,7 +82,8 @@ def expensive_destroy(solution, instance, destroy_ratio):
         new_solution[c] = None
     return new_solution
 
-# ---------- NEW: precompute facility order per customer (by ascending assignment cost)
+# precompute, for each customer, the list of facilities sorted by increasing assignment cost.
+# this avoids re-sorting in every repair/improvement call.
 def precompute_facility_order(instance):
     no_fac = len(instance["facilities"])
     no_cus = len(instance["customer_demands"])
@@ -77,12 +93,15 @@ def precompute_facility_order(instance):
         order.append(facilities_sorted)
     return order
 
-# ---------- IMPROVED: cost-aware local improvement (considers facility open/close deltas)
+# local improvement that tries to reassign a customer to a cheaper facility
+# while considering capacity and the effect of opening/closing facilities.
+# I only take improving moves (negative delta).
 def local_improve(solution, instance, facility_order, max_passes=1, top_k=20):
     facilities = instance["facilities"]
     demands = instance["customer_demands"]
     costs = instance["assignment_costs"]
 
+    # track remaining capacity and how many customers each facility has
     capacities = [f["capacity"] for f in facilities]
     remain = capacities[:]
     counts = [0] * len(facilities)
@@ -95,10 +114,12 @@ def local_improve(solution, instance, facility_order, max_passes=1, top_k=20):
 
     for _ in range(max_passes):
         changed = False
-        # visit expensive customers first
-        order_c = sorted(range(len(new_solution)),
-                         key=lambda c: costs[new_solution[c]][c],
-                         reverse=True)
+        # try to fix the most expensive customers first
+        order_c = sorted(
+            range(len(new_solution)),
+            key=lambda c: costs[new_solution[c]][c],
+            reverse=True
+        )
 
         for c in order_c:
             from_f = new_solution[c]
@@ -106,14 +127,17 @@ def local_improve(solution, instance, facility_order, max_passes=1, top_k=20):
             cur_assign = costs[from_f][c]
 
             best_f = None
-            best_delta = 0
+            best_delta = 0  # negative is good (improvement)
 
+            # check only the top_k cheapest facilities for this customer
             for to_f in facility_order[c][:top_k]:
                 if to_f == from_f:
                     continue
                 if remain[to_f] < d:
+                    # not enough capacity there
                     continue
 
+                # compute total delta: assignment change + possible open/close facility cost
                 delta_assign = costs[to_f][c] - cur_assign
                 open_delta = facilities[to_f]["opening_cost"] if counts[to_f] == 0 else 0
                 close_delta = -facilities[from_f]["opening_cost"] if counts[from_f] == 1 else 0
@@ -124,7 +148,7 @@ def local_improve(solution, instance, facility_order, max_passes=1, top_k=20):
                     best_f = to_f
 
             if best_f is not None:
-                # apply move
+                # apply the improving move
                 new_solution[c] = best_f
                 remain[from_f] += d
                 remain[best_f] -= d
@@ -133,15 +157,18 @@ def local_improve(solution, instance, facility_order, max_passes=1, top_k=20):
                 changed = True
 
         if not changed:
+            # no improvements found in this pass
             break
 
     return new_solution
 
-# ---------- IMPROVED: repair prefers already-open facilities to avoid opening-cost spikes
+# repair function: reassign unassigned customers.
+# it prefers already-open facilities first to avoid paying new opening costs when possible.
 def repair(destroyed_solution, instance, closed_factories=None, facility_order=None, top_k=10):
     """
-    Repair while avoiding assigning to factories in closed_factories (list or set).
-    If facility_order is provided, sorting is avoided.
+    destroyed_solution: list of facility indices or None for unassigned customers
+    closed_factories: a set of factories we temporarily don't allow
+    facility_order: precomputed sorted facilities per customer (cheapest first)
     """
     if closed_factories is None:
         closed_factories = set()
@@ -151,10 +178,11 @@ def repair(destroyed_solution, instance, closed_factories=None, facility_order=N
     F = len(instance["facilities"])
     demands = instance["customer_demands"]
 
+    # set remaining capacities and track which facilities are already used
     facility_remain_capacity = [instance["facilities"][i]["capacity"] for i in range(F)]
     used = [False] * F
 
-    # mark closed factories capacity to 0
+    # mark closed factories by setting remaining capacity to 0 so we won't use them
     for f in closed_factories:
         if 0 <= f < F:
             facility_remain_capacity[f] = 0
@@ -167,7 +195,7 @@ def repair(destroyed_solution, instance, closed_factories=None, facility_order=N
         else:
             customers_to_repair.append(customer)
 
-    # repair larger-demand customers first
+    # assign bigger demands first; they are harder to place
     customers_to_repair.sort(key=lambda c: demands[c], reverse=True)
 
     new_solution = destroyed_solution.copy()
@@ -176,19 +204,23 @@ def repair(destroyed_solution, instance, closed_factories=None, facility_order=N
         demand = demands[customer]
 
         if facility_order is not None:
+            # try the k cheapest facilities first
             ordered = [f for f in facility_order[customer] if f not in closed_factories]
             front = ordered[:top_k]
+            # prioritize facilities we already used (to avoid extra opening costs)
             open_cands = [f for f in front if used[f] and facility_remain_capacity[f] >= demand]
             closed_cands = [f for f in front if (not used[f]) and facility_remain_capacity[f] >= demand]
 
             if open_cands:
+                # add a bit of randomness among the best few
                 chosen_fac = random.choice(open_cands[:min(3, len(open_cands))])
             elif closed_cands:
                 chosen_fac = random.choice(closed_cands[:min(2, len(closed_cands))])
             else:
-                # fallback scan beyond top_k
+                # fallback: scan beyond top_k to find any feasible facility
                 chosen_fac = next((f for f in ordered if facility_remain_capacity[f] >= demand), None)
         else:
+            # slower fallback: compute and sort costs on the fly
             assignment_costs = sorted(
                 [(instance["assignment_costs"][j][customer], j)
                  for j in range(F) if j not in closed_factories]
@@ -199,28 +231,35 @@ def repair(destroyed_solution, instance, closed_factories=None, facility_order=N
             )
 
         if chosen_fac is None:
+            # if this triggers, something is off (maybe too many factories closed)
             raise Exception(f"No feasible facility found for customer {customer} during repair (closed_factories={closed_factories})")
 
+        # assign and update remaining capacity + used flag
         new_solution[customer] = chosen_fac
         facility_remain_capacity[chosen_fac] -= demand
         used[chosen_fac] = True
 
     return new_solution
 
-# ---------- NEW: 2-customer swap local search (capacity-feasible, opening-cost neutral)
+# simple 2-customer swap local search:
+# try swapping the facilities of two customers if it lowers total assignment cost and is capacity-feasible.
+# this does not change opening costs because the set of used facilities stays the same.
 def swap_improve(solution, instance, budget=2000):
     demands = instance["customer_demands"]
     costs = instance["assignment_costs"]
     facilities = instance["facilities"]
     F, C = len(facilities), len(demands)
 
+    # set up remaining capacity given current solution
     capacities = [f["capacity"] for f in facilities]
     remain = capacities[:]
     for c, f in enumerate(solution):
         remain[f] -= demands[c]
 
     new_solution = solution.copy()
+    # keep current per-customer assignment cost for quicker ordering
     cur_cost_per_c = [costs[new_solution[c]][c] for c in range(C)]
+    # focus on the top expensive customers to intensify
     top = sorted(range(C), key=lambda c: cur_cost_per_c[c], reverse=True)[:min(C, 100)]
 
     for _ in range(budget):
@@ -228,18 +267,20 @@ def swap_improve(solution, instance, budget=2000):
         c2 = random.randrange(C)
         f1, f2 = new_solution[c1], new_solution[c2]
         if f1 == f2:
+            # swapping within the same facility does nothing
             continue
         d1, d2 = demands[c1], demands[c2]
 
-        # capacity feasibility after swap
+        # check capacity after swap (simulate removing and adding)
         if remain[f1] + d1 - d2 < 0:
             continue
         if remain[f2] + d2 - d1 < 0:
             continue
 
+        # compute the assignment delta for the swap
         delta = (costs[f2][c1] + costs[f1][c2]) - (costs[f1][c1] + costs[f2][c2])
         if delta < 0:
-            # apply swap
+            # apply beneficial swap
             new_solution[c1], new_solution[c2] = f2, f1
             remain[f1] += (d1 - d2)
             remain[f2] += (d2 - d1)
@@ -248,19 +289,23 @@ def swap_improve(solution, instance, budget=2000):
 
     return new_solution
 
+# main LNS loop: destroy part of the solution, repair it, then improve locally.
+# I keep the best solution seen and stop when the instance timeout is reached.
 def lns_solver(instance):
     time_limit = instance['timeout']
     start_time = time.time()
 
+    # precompute sorted facility lists per customer once
     facility_order = precompute_facility_order(instance)
 
+    # start from a basic feasible solution
     current_solution = naive_feasible_solution(instance)
     current_cost = calculate_solution_cost(current_solution, instance)
 
     best = current_solution.copy()
     best_cost = current_cost
 
-    # SA parameters (tunable)
+    # simple simulated annealing style acceptance to allow some uphill moves
     temp = 100.0
     cooling = 0.995
     min_temp = 1e-3
@@ -271,7 +316,8 @@ def lns_solver(instance):
         elapsed = time.time() - start_time
         progress = elapsed / max(1e-9, time_limit)
 
-        # adaptive destroy ratio
+        # adapt destroy ratio: for larger instances, destroy less;
+        # near the end, destroy even less to intensify.
         if no_customers >= 100:
             base_low, base_high = (0.05, 0.15)
         else:
@@ -280,8 +326,10 @@ def lns_solver(instance):
             base_low, base_high = (0.03, 0.08)
         destroy_ratio = random.uniform(base_low, base_high)
 
+        # pick a destroy operator
         destroy_op = random.choice([random_destroy, factory_destroy, expensive_destroy])
 
+        # apply the chosen destroy
         if destroy_op is factory_destroy:
             num_available = len(instance["facilities"])
             num_factories = max(1, int(destroy_ratio * num_available))
@@ -291,7 +339,7 @@ def lns_solver(instance):
         else:
             destroyed_solution = destroy_op(current_solution, destroy_ratio)
 
-        # temporarily close few low-load factories to diversify
+        # temporary diversification: close some low-load factories during repair
         facility_count = [0] * len(instance["facilities"])
         for fac in current_solution:
             if fac is not None:
@@ -308,23 +356,38 @@ def lns_solver(instance):
             if num_to_close > 0:
                 temp_closed = set(random.sample(small_factories, num_to_close))
 
-        # repair (prefers already open facilities)
+        # repair the partial solution (prefer using already-open facilities)
         try:
-            repaired_solution = repair(destroyed_solution, instance, closed_factories=temp_closed, facility_order=facility_order, top_k=15)
+            repaired_solution = repair(
+                destroyed_solution, instance,
+                closed_factories=temp_closed,
+                facility_order=facility_order,
+                top_k=15
+            )
         except Exception:
-            repaired_solution = repair(destroyed_solution, instance, closed_factories=None, facility_order=facility_order, top_k=15)
+            # if temporary closures make it infeasible, retry without them
+            repaired_solution = repair(
+                destroyed_solution, instance,
+                closed_factories=None,
+                facility_order=facility_order,
+                top_k=15
+            )
 
-        # intensification: more passes later
+        # increase polishing near the end
         passes = 2 if progress > 0.75 else 1
-        repaired_solution = local_improve(repaired_solution, instance, facility_order, max_passes=passes, top_k=20)
+        repaired_solution = local_improve(
+            repaired_solution, instance, facility_order,
+            max_passes=passes, top_k=20
+        )
 
-        # 2-swap refinement
+        # try some random 2-swaps among expensive customers
         swap_budget = 3000 if progress > 0.75 else 1500
         repaired_solution = swap_improve(repaired_solution, instance, budget=swap_budget)
 
         new_cost = calculate_solution_cost(repaired_solution, instance)
         delta = new_cost - current_cost
 
+        # decide whether to accept the new solution
         accept = False
         if new_cost < current_cost:
             accept = True
@@ -341,7 +404,7 @@ def lns_solver(instance):
             best = repaired_solution.copy()
             best_cost = new_cost
 
+        # cool down the temperature
         temp = max(min_temp, temp * cooling)
 
     return best
-
