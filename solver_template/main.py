@@ -23,6 +23,8 @@ output_path = sys.argv[2]
 
 
 def main():
+    time_limit = instance['timeout']
+    start_time = time.time()
     instance = read_instance_json(instance_path)
     if solution_function.is_infeasible(instance):
         raise Exception("Instance is infeasible, no solution possible.")
@@ -34,8 +36,6 @@ def main():
     print("Initial cost:", initial_cost)
     
     #LNS solver
-    time_limit = instance['timeout']
-    start_time = time.time()
     current_solution = solution
     current_cost = initial_cost
     best = current_solution.copy()

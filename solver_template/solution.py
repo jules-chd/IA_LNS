@@ -111,25 +111,40 @@ def repair(destroyed_solution, instance, closed_factories=None):
 
 def is_infeasible(instance):
     """
-    Minimal feasibility check (assumes instance well-formed).
+    Minimal feasibility check (instance assumed well-formed).
     Returns True if infeasible, False otherwise.
+
     Checks:
-      - any customer demand > max facility capacity
+      - any single customer demand > max facility capacity
       - total demand > total capacity
+      - attempts a Best-Fit-Decreasing packing (if fails, declare infeasible)
     """
-    facilities = instance["facilities"]
-    demands = instance["customer_demands"]
+    capacities = [int(f["capacity"]) for f in instance["facilities"]]
+    demands = [int(d) for d in instance["customer_demands"]]
 
-    capacities = [float(f["capacity"]) for f in facilities]
-    total_capacity = sum(capacities)
-    total_demand = sum(float(d) for d in demands)
+    if not capacities:
+        return True
 
-    max_cap = max(capacities) if capacities else 0.0
+    # quick checks
+    max_cap = max(capacities)
+    if any(d > max_cap for d in demands):
+        return True
+    if sum(demands) > sum(capacities):
+        return True
 
-    # per-customer check
-    for d in demands:
-        if float(d) > max_cap:
+    # Best-Fit-Decreasing: sort demands desc and place each in the bin that will have the smallest leftover >= 0
+    bins = capacities.copy()
+    for d in sorted(demands, reverse=True):
+        best_idx = None
+        best_rem_after = None
+        for i, rem in enumerate(bins):
+            if rem >= d:
+                rem_after = rem - d
+                if best_idx is None or rem_after < best_rem_after:
+                    best_idx = i
+                    best_rem_after = rem_after
+        if best_idx is None:
             return True
+        bins[best_idx] -= d
 
-    # total capacity check
-    return total_demand > total_capacity
+    return False
