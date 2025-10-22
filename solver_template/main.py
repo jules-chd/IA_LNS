@@ -38,6 +38,8 @@ def main():
     best = current_solution.copy()
     best_cost = current_cost
 
+
+    # SA parameters (tunable)
     temp = 100.0
     cooling = 0.995
     min_temp = 1e-3
@@ -53,16 +55,19 @@ def main():
         else:
             destroyed_solution = destroy(current_solution, destroy_ratio)
 
+        # temporary closure: choose factories with few customers in current_solution
         facility_count = [0] * len(instance["facilities"])
         for cust_idx, fac in enumerate(current_solution):
             if fac is not None:
                 facility_count[fac] += 1
 
+        # simple threshold depending on destroy_ratio (adjustable)
         threshold = max(1, int(destroy_ratio * 5))
         small_factories = [i for i, cnt in enumerate(facility_count) if cnt <= threshold]
 
         temp_closed = set()
         if small_factories:
+            # number to temporarily close proportional to destroy_ratio
             num_to_close = int(len(small_factories) * destroy_ratio)
             if num_to_close <= 0 and random.random() < 0.2:
                 num_to_close = 1
@@ -70,14 +75,17 @@ def main():
             if num_to_close > 0:
                 temp_closed = set(random.sample(small_factories, num_to_close))
 
+        # repair while forbidding temp_closed (the chosen factories will not be reopened during this repair)
         try:
             repaired_solution = solution_function.repair(destroyed_solution, instance, closed_factories=temp_closed)
         except Exception:
+            # if repair fails (e.g., temporary closures make it infeasible), retry without temporary closures
             repaired_solution = solution_function.repair(destroyed_solution, instance, closed_factories=None)
 
         new_cost = calculate_solution_cost(repaired_solution, instance)
         delta = new_cost - current_cost
 
+        # acceptance rule: always if better, else probabilistic (SA)
         accept = False
         if new_cost < current_cost:
             accept = True
@@ -93,10 +101,12 @@ def main():
             current_solution = repaired_solution.copy()
             current_cost = new_cost
 
+        # keep the global best
         if new_cost < best_cost:
             best = repaired_solution.copy()
             best_cost = new_cost
 
+        # cooling
         temp = max(min_temp, temp * cooling)
     
     best_solution = best
@@ -119,6 +129,6 @@ def main():
     #     restante = cap - used_capacity[i]
     #     print(f"{i:5d} | {cap:8d} | {used_capacity[i]:7d} | {clients_count[i]:7d} | {restante:8d}")
 
- 
+
 if __name__ == "__main__":
     main()
