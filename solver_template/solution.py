@@ -40,19 +40,19 @@ def random_destroy(solution, destroy_ratio):
     return new_solution
 
 
-# "destroy" by randomly picking some factories to close temporarily,
-# and unassign all customers served by those factories.
-def factory_destroy(solution, instance, num_factories=1):
+# "destroy" by randomly picking some facilities to close temporarily,
+# and unassign all customers served by those facilities.
+def facility_destroy(solution, instance, num_facilities=1):
     if not isinstance(instance, dict):
-        raise TypeError(f"factory_destroy expected instance (dict), got {type(instance)}")
+        raise TypeError(f"facility_destroy expected instance (dict), got {type(instance)}")
 
     new_solution = solution.copy()
     num_available = len(instance["facilities"])
-    k = min(max(1, int(num_factories)), num_available)
-    factories_to_close = random.sample(range(num_available), k)
+    k = min(max(1, int(num_facilities)), num_available)
+    facilities_to_close = random.sample(range(num_available), k)
 
     for i, assigned in enumerate(new_solution):
-        if assigned is not None and assigned in factories_to_close:
+        if assigned is not None and assigned in facilities_to_close:
             new_solution[i] = None
 
     return new_solution
@@ -164,16 +164,16 @@ def local_improve(solution, instance, facility_order, max_passes=1, top_k=20):
 
 # repair function: reassign unassigned customers.
 # it prefers already-open facilities first to avoid paying new opening costs when possible.
-def repair(destroyed_solution, instance, closed_factories=None, facility_order=None, top_k=10):
+def repair(destroyed_solution, instance, closed_facilities=None, facility_order=None, top_k=10):
     """
     destroyed_solution: list of facility indices or None for unassigned customers
-    closed_factories: a set of factories we temporarily don't allow
+    closed_facilities: a set of facilities we temporarily don't allow
     facility_order: precomputed sorted facilities per customer (cheapest first)
     """
-    if closed_factories is None:
-        closed_factories = set()
+    if closed_facilities is None:
+        closed_facilities = set()
     else:
-        closed_factories = set(closed_factories)
+        closed_facilities = set(closed_facilities)
 
     F = len(instance["facilities"])
     demands = instance["customer_demands"]
@@ -182,14 +182,14 @@ def repair(destroyed_solution, instance, closed_factories=None, facility_order=N
     facility_remain_capacity = [instance["facilities"][i]["capacity"] for i in range(F)]
     used = [False] * F
 
-    # mark closed factories by setting remaining capacity to 0 so we won't use them
-    for f in closed_factories:
+    # mark closed facilities by setting remaining capacity to 0 so we won't use them
+    for f in closed_facilities:
         if 0 <= f < F:
             facility_remain_capacity[f] = 0
 
     customers_to_repair = []
     for customer, assigned in enumerate(destroyed_solution):
-        if assigned is not None and assigned not in closed_factories:
+        if assigned is not None and assigned not in closed_facilities:
             facility_remain_capacity[assigned] -= demands[customer]
             used[assigned] = True
         else:
@@ -205,7 +205,7 @@ def repair(destroyed_solution, instance, closed_factories=None, facility_order=N
 
         if facility_order is not None:
             # try the k cheapest facilities first
-            ordered = [f for f in facility_order[customer] if f not in closed_factories]
+            ordered = [f for f in facility_order[customer] if f not in closed_facilities]
             front = ordered[:top_k]
             # prioritize facilities we already used (to avoid extra opening costs)
             open_cands = [f for f in front if used[f] and facility_remain_capacity[f] >= demand]
@@ -223,7 +223,7 @@ def repair(destroyed_solution, instance, closed_factories=None, facility_order=N
             # slower fallback: compute and sort costs on the fly
             assignment_costs = sorted(
                 [(instance["assignment_costs"][j][customer], j)
-                 for j in range(F) if j not in closed_factories]
+                 for j in range(F) if j not in closed_facilities]
             )
             feas = [fac for cost, fac in assignment_costs if facility_remain_capacity[fac] >= demand][:3]
             chosen_fac = random.choice(feas) if feas else next(
@@ -231,8 +231,8 @@ def repair(destroyed_solution, instance, closed_factories=None, facility_order=N
             )
 
         if chosen_fac is None:
-            # if this triggers, something is off (maybe too many factories closed)
-            raise Exception(f"No feasible facility found for customer {customer} during repair (closed_factories={closed_factories})")
+            # if this triggers, something is off (maybe too many facilities closed)
+            raise Exception(f"No feasible facility found for customer {customer} during repair (closed_facilities={closed_facilities})")
 
         # assign and update remaining capacity + used flag
         new_solution[customer] = chosen_fac

@@ -66,41 +66,41 @@ def main():
         destroy_ratio = random.uniform(base_low, base_high)
         
         # pick a destroy operator
-        destroy_op = random.choice([solution_function.random_destroy, solution_function.factory_destroy, solution_function.expensive_destroy])
+        destroy_op = random.choice([solution_function.random_destroy, solution_function.facility_destroy, solution_function.expensive_destroy])
 
 
         # apply the chosen destroy
-        if destroy_op is solution_function.factory_destroy:
+        if destroy_op is solution_function.facility_destroy:
             num_available = len(instance["facilities"])
-            num_factories = max(1, int(destroy_ratio * num_available))
-            destroyed_solution = destroy_op(current_solution, instance, num_factories=num_factories)
+            num_facilities = max(1, int(destroy_ratio * num_available))
+            destroyed_solution = destroy_op(current_solution, instance, num_facilities=num_facilities)
         elif destroy_op is solution_function.expensive_destroy:
             destroyed_solution = destroy_op(current_solution, instance, destroy_ratio)
         else:
             destroyed_solution = destroy_op(current_solution, destroy_ratio)
 
-        # temporary diversification: close some low-load factories during repair
+        # temporary diversification: close some low-load facilities during repair
         facility_count = [0] * len(instance["facilities"])
         for fac in current_solution:
             if fac is not None:
                 facility_count[fac] += 1
         threshold = max(1, int(destroy_ratio * 5))
-        small_factories = [i for i, cnt in enumerate(facility_count) if cnt <= threshold]
+        small_facilities = [i for i, cnt in enumerate(facility_count) if cnt <= threshold]
 
         temp_closed = set()
-        if small_factories:
-            num_to_close = int(len(small_factories) * destroy_ratio)
+        if small_facilities:
+            num_to_close = int(len(small_facilities) * destroy_ratio)
             if num_to_close <= 0 and random.random() < 0.2:
                 num_to_close = 1
-            num_to_close = min(len(small_factories), max(0, num_to_close))
+            num_to_close = min(len(small_facilities), max(0, num_to_close))
             if num_to_close > 0:
-                temp_closed = set(random.sample(small_factories, num_to_close))
+                temp_closed = set(random.sample(small_facilities, num_to_close))
 
         # repair the partial solution (prefer using already-open facilities)
         try:
             repaired_solution = solution_function.repair(
                 destroyed_solution, instance,
-                closed_factories=temp_closed,
+                closed_facilities=temp_closed,
                 facility_order=facility_order,
                 top_k=15
             )
@@ -108,7 +108,7 @@ def main():
             # if temporary closures make it infeasible, retry without them
             repaired_solution = solution_function.repair(
                 destroyed_solution, instance,
-                closed_factories=None,
+                closed_facilities=None,
                 facility_order=facility_order,
                 top_k=15
             )
